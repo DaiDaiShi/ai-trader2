@@ -65,6 +65,18 @@ export async function getCryptoMarketStatus(symbol: string) {
   return response.json()
 }
 
+export async function getCryptoKline(
+  symbol: string,
+  market: string = 'CRYPTO',
+  period: string = '1h',
+  count: number = 100
+): Promise<{ data: Array<{ timestamp: number; datetime?: string; open?: number; high?: number; low?: number; close?: number; volume?: number }> }> {
+  // Use CRYPTO market for crypto symbols, map to US for the API
+  const apiMarket = market === 'CRYPTO' ? 'US' : market
+  const response = await apiRequest(`/market/kline/${symbol}?market=${apiMarket}&period=${period}&count=${count}`)
+  return response.json()
+}
+
 export async function getPopularCryptos() {
   const response = await apiRequest('/crypto/popular')
   return response.json()

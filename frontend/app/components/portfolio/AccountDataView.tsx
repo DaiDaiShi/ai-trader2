@@ -7,6 +7,7 @@ import { toast } from 'react-hot-toast'
 import AssetCurveWithData from './AssetCurveWithData'
 import AccountSelector from '@/components/layout/AccountSelector'
 import TradingPanel from '@/components/trading/TradingPanel'
+import PriceChart from './PriceChart'
 import { Doughnut } from 'react-chartjs-2'
 import { Chart as ChartJS, ArcElement, Tooltip as ChartTooltip, Legend } from 'chart.js'
 import { AIDecision } from '@/lib/api'
@@ -186,6 +187,21 @@ export default function AccountDataView({
                     <div className="space-y-6">
                       <PortfolioPieChart overview={overview} positions={positions} />
                       <PositionList positions={positions} />
+                      {/* Price Charts for each position */}
+                      {positions.length > 0 && (
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-semibold">Price Charts</h3>
+                          {positions.map(position => (
+                            <PriceChart
+                              key={`${position.symbol}-${position.market}`}
+                              symbol={position.symbol}
+                              market={position.market}
+                              trades={trades}
+                              accountId={overview.account.id}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
 

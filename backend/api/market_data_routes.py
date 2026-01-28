@@ -26,7 +26,7 @@ class PriceResponse(BaseModel):
 class KlineItem(BaseModel):
     """K-line data item model"""
     timestamp: int
-    datetime: str
+    datetime: Optional[str] = None
     open: Optional[float]
     high: Optional[float]
     low: Optional[float]
@@ -161,16 +161,33 @@ async def get_crypto_kline(
         # Convert data format
         kline_items = []
         for item in kline_data:
+            timestamp = item.get('timestamp')
+            if not timestamp:
+                logger.warning(f"Skipping kline item with missing timestamp: {item}")
+                continue
+
+            datetime_val = item.get('datetime') or item.get('datetime_str')
+            if datetime_val:
+                if isinstance(datetime_val, str):
+                    datetime_str = datetime_val
+                else:
+                    # If it's a datetime object, convert to ISO string
+                    datetime_str = datetime_val.isoformat() if hasattr(datetime_val, 'isoformat') else str(datetime_val)
+            else:
+                # Fallback: generate ISO string from timestamp
+                from datetime import datetime, timezone
+                datetime_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+            
             kline_items.append(KlineItem(
-                timestamp=item.get('timestamp'),
-                datetime=item.get('datetime').isoformat() if item.get('datetime') else None,
+                timestamp=timestamp,
+                datetime=datetime_str,
                 open=item.get('open'),
                 high=item.get('high'),
                 low=item.get('low'),
                 close=item.get('close'),
                 volume=item.get('volume'),
                 amount=item.get('amount'),
-                chg=item.get('chg'),
+                chg=item.get('chg') or item.get('change'),
                 percent=item.get('percent')
             ))
         
