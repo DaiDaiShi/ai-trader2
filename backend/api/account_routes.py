@@ -405,25 +405,70 @@ async def get_asset_curve_by_timeframe(
                 "is_active": account.is_active == "true",
             } for account in accounts]
         
-        # Fetch kline data for all symbols (20 points)
+        # Generate timestamps and get kline data
+        # In replay mode, generate timestamps based on replay period; otherwise use latest kline data
         from services.market_data import get_kline_data
+        from services.asset_curve_calculator import _generate_timestamps_for_replay
         
         symbol_klines = {}
-        for symbol, market in unique_symbols:
-            try:
-                klines = get_kline_data(symbol, market, period, 20)
-                if klines:
-                    symbol_klines[(symbol, market)] = klines
-                    logger.info(f"Fetched {len(klines)} klines for {symbol}.{market}")
-            except Exception as e:
-                logger.warning(f"Failed to fetch klines for {symbol}.{market}: {e}")
+        timestamps = []
+        replay_start_date = None
+        replay_current_date = None
         
-        if not symbol_klines:
-            raise HTTPException(status_code=500, detail="Failed to fetch market data")
+        try:
+            from services.replay_service import get_replay_date_range
+            replay_range = get_replay_date_range()
+            if replay_range:
+                replay_start_date, replay_current_date = replay_range
+                logger.info(f"Replay mode active: generating timestamps from {replay_start_date} to {replay_current_date}")
+                
+                # Generate timestamps based on timeframe within replay period
+                timestamps = _generate_timestamps_for_replay(replay_start_date, replay_current_date, period)
+                logger.info(f"Generated {len(timestamps)} timestamps for replay period")
+                
+                # For each symbol, fetch historical prices for these timestamps
+                for symbol, market in unique_symbols:
+                    try:
+                        klines = []
+                        for ts in timestamps:
+                            ts_datetime = datetime.fromtimestamp(ts, tz=timezone.utc)
+                            # Use replay_service to get historical price
+                            from services.replay_service import get_historical_price
+                            price = get_historical_price(symbol, market, ts_datetime)
+                            if price is not None:
+                                klines.append({
+                                    'timestamp': ts,
+                                    'datetime_str': ts_datetime.isoformat(),
+                                    'close': price,
+                                    'open': price,
+                                    'high': price,
+                                    'low': price,
+                                })
+                        if klines:
+                            symbol_klines[(symbol, market)] = klines
+                            logger.info(f"Fetched {len(klines)} historical prices for {symbol}.{market} (replay period)")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch historical prices for {symbol}.{market}: {e}")
+        except Exception:
+            pass  # Not in replay mode
         
-        # Get timestamps from the first symbol's klines
-        first_klines = next(iter(symbol_klines.values()))
-        timestamps = [k['timestamp'] for k in first_klines]
+        # If not in replay mode or replay mode failed, use normal kline data
+        if not timestamps or not symbol_klines:
+            for symbol, market in unique_symbols:
+                try:
+                    klines = get_kline_data(symbol, market, period, 20)
+                    if klines:
+                        symbol_klines[(symbol, market)] = klines
+                        logger.info(f"Fetched {len(klines)} klines for {symbol}.{market}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch klines for {symbol}.{market}: {e}")
+            
+            if not symbol_klines:
+                raise HTTPException(status_code=500, detail="Failed to fetch market data")
+            
+            # Get timestamps from kline data
+            first_klines = next(iter(symbol_klines.values()))
+            timestamps = [k['timestamp'] for k in first_klines]
         
         # Calculate asset value for each account at each timestamp
         result = []
@@ -431,9 +476,23 @@ async def get_asset_curve_by_timeframe(
             account_id = account.id
             
             # Get all trades for this account
-            trades = db.query(Trade).filter(
-                Trade.account_id == account_id
-            ).order_by(Trade.trade_time.asc()).all()
+            # Filter by replay period if replay mode is active
+            trade_query = db.query(Trade).filter(Trade.account_id == account_id)
+            
+            try:
+                from services.replay_service import get_replay_date_range
+                replay_range = get_replay_date_range()
+                if replay_range:
+                    start_date, current_date = replay_range
+                    trade_query = trade_query.filter(
+                        Trade.trade_time >= start_date,
+                        Trade.trade_time <= current_date
+                    )
+                    logger.info(f"Filtering trades for replay mode: {start_date} to {current_date}")
+            except Exception:
+                pass  # If replay service not available, continue without filter
+            
+            trades = trade_query.order_by(Trade.trade_time.asc()).all()
             
             if not trades:
                 # No trades, return initial capital at all timestamps

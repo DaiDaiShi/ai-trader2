@@ -245,6 +245,17 @@ def place_and_execute_crypto(
         raise ValueError(f"Invalid side: {side}. Must be LONG/SHORT (open) or BUY/SELL (close)")
     
     # Create trade record
+    # Set trade_time to replay date if replay mode is active
+    trade_time = None
+    try:
+        from services.replay_service import is_replay_active, get_current_replay_date
+        if is_replay_active():
+            replay_date = get_current_replay_date()
+            if replay_date:
+                trade_time = replay_date
+    except Exception:
+        pass  # If replay service not available, use default (current time)
+    
     trade = Trade(
         order_id=order.id,
         account_id=account.id,
@@ -257,6 +268,7 @@ def place_and_execute_crypto(
         commission=float(taker_fee),
         taker_fee=float(taker_fee),
         interest_charged=float(interest_charged),
+        trade_time=trade_time if trade_time else None  # None will use server_default
     )
     db.add(trade)
     
@@ -269,5 +281,17 @@ def place_and_execute_crypto(
     db.refresh(account)
     if pos:
         db.refresh(pos)
+    
+    # Broadcast asset curve updates for all timeframes after trade execution
+    try:
+        from api.ws import broadcast_asset_curve_update_sync
+        # Broadcast updates for all timeframes
+        for timeframe in ["5m", "1h", "1d"]:
+            try:
+                broadcast_asset_curve_update_sync(timeframe)
+            except Exception as e:
+                logger.warning(f"Failed to broadcast asset curve update for {timeframe}: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to broadcast asset curve updates: {e}")
     
     return order

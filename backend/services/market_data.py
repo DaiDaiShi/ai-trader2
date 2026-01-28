@@ -1,4 +1,4 @@
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import logging
 from .hyperliquid_market_data import (
     get_last_price_from_hyperliquid,
@@ -12,6 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 def get_last_price(symbol: str, market: str = "CRYPTO") -> float:
+    """
+    Get last price for a symbol. In replay mode, returns historical price.
+    Otherwise returns real-time price.
+    """
+    # Check if replay mode is active
+    from .replay_service import is_replay_active, get_current_replay_date, get_historical_price
+    
+    if is_replay_active():
+        current_date = get_current_replay_date()
+        if current_date:
+            historical_price = get_historical_price(symbol, market, current_date)
+            if historical_price is not None:
+                logger.debug(f"Using historical price for {symbol} at {current_date}: {historical_price}")
+                return historical_price
+            else:
+                logger.warning(f"No historical price found for {symbol} at {current_date}, falling back to real-time")
+    
     key = f"{symbol}.{market}"
     
     # Check cache first
@@ -36,11 +53,21 @@ def get_last_price(symbol: str, market: str = "CRYPTO") -> float:
         raise Exception(f"Unable to get real-time price for {key}: {hl_err}")
 
 
-def get_kline_data(symbol: str, market: str = "CRYPTO", period: str = "1d", count: int = 100) -> List[Dict[str, Any]]:
+def get_kline_data(symbol: str, market: str = "CRYPTO", period: str = "1d", count: int = 100, since: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Get kline data for a symbol
+    
+    Args:
+        symbol: Trading symbol
+        market: Market type
+        period: Timeframe ('1m', '5m', '1h', '1d', etc.)
+        count: Number of candles to fetch
+        since: Optional timestamp in milliseconds to fetch historical data from
+    """
     key = f"{symbol}.{market}"
 
     try:
-        data = get_kline_data_from_hyperliquid(symbol, period, count)
+        data = get_kline_data_from_hyperliquid(symbol, period, count, since)
         if data:
             logger.info(f"Got K-line data for {key} from Hyperliquid, total {len(data)} items")
             return data

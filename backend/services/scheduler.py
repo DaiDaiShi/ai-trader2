@@ -539,6 +539,12 @@ def _ensure_market_data_ready() -> None:
 def reset_auto_trading_job():
     """Reset the auto trading job after account configuration changes"""
     try:
+        # Check if replay mode is active - if so, don't schedule auto-trading
+        from services.replay_service import is_replay_active
+        if is_replay_active():
+            logger.info("Replay mode is active - skipping auto trading job reset (replay handles trading)")
+            return
+        
         # Import constants from auto_trader module
         from services.auto_trader import AI_TRADE_JOB_ID
         from services.trading_commands import place_ai_driven_crypto_order

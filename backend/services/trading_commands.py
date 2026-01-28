@@ -82,7 +82,14 @@ def _select_side(db: Session, account: Account, symbol: str, max_value: float) -
 
 def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
     """Place crypto order based on AI model decision for all active accounts"""
-    logger.info(f"🔄 Auto trading job triggered (max_ratio={max_ratio})")
+    # Check if replay mode is active
+    from services.replay_service import is_replay_active, get_current_replay_date
+    if is_replay_active():
+        current_date = get_current_replay_date()
+        logger.info(f"🔄 Auto trading job triggered in REPLAY MODE (current date: {current_date}, max_ratio={max_ratio})")
+    else:
+        logger.info(f"🔄 Auto trading job triggered (max_ratio={max_ratio})")
+    
     db = SessionLocal()
     try:
         accounts = get_active_ai_accounts(db)
@@ -92,7 +99,7 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
         
         logger.info(f"Found {len(accounts)} active AI account(s) for trading")
 
-        # Get latest market prices once for all accounts
+        # Get latest market prices once for all accounts (will use historical prices in replay mode)
         prices = _get_market_prices(AI_TRADING_SYMBOLS)
         if not prices:
             logger.warning("Failed to fetch market prices, skipping AI trading")

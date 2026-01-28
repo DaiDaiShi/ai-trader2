@@ -45,8 +45,16 @@ class HyperliquidClient:
             logger.error(f"Error fetching price for {symbol}: {e}")
             return None
 
-    def get_kline_data(self, symbol: str, period: str = '1d', count: int = 100) -> List[Dict[str, Any]]:
-        """Get kline/candlestick data for a symbol"""
+    def get_kline_data(self, symbol: str, period: str = '1d', count: int = 100, since: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Get kline/candlestick data for a symbol
+        
+        Args:
+            symbol: Trading symbol (e.g., 'BTC')
+            period: Timeframe ('1m', '5m', '1h', '1d', etc.)
+            count: Number of candles to fetch
+            since: Optional timestamp in milliseconds to fetch historical data from
+        """
         try:
             if not self.exchange:
                 self._initialize_exchange()
@@ -65,7 +73,11 @@ class HyperliquidClient:
             timeframe = timeframe_map.get(period, '1d')
             
             # Fetch OHLCV data
-            ohlcv = self.exchange.fetch_ohlcv(formatted_symbol, timeframe, limit=count)
+            # If since is provided, use it to fetch historical data
+            if since is not None:
+                ohlcv = self.exchange.fetch_ohlcv(formatted_symbol, timeframe, since=since, limit=count)
+            else:
+                ohlcv = self.exchange.fetch_ohlcv(formatted_symbol, timeframe, limit=count)
             
             # Convert to our format
             klines = []
@@ -195,9 +207,9 @@ def get_last_price_from_hyperliquid(symbol: str) -> Optional[float]:
     return hyperliquid_client.get_last_price(symbol)
 
 
-def get_kline_data_from_hyperliquid(symbol: str, period: str = '1d', count: int = 100) -> List[Dict[str, Any]]:
+def get_kline_data_from_hyperliquid(symbol: str, period: str = '1d', count: int = 100, since: Optional[int] = None) -> List[Dict[str, Any]]:
     """Get kline data from Hyperliquid"""
-    return hyperliquid_client.get_kline_data(symbol, period, count)
+    return hyperliquid_client.get_kline_data(symbol, period, count, since)
 
 
 def get_market_status_from_hyperliquid(symbol: str) -> Dict[str, Any]:

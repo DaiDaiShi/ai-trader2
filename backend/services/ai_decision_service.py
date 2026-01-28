@@ -332,6 +332,17 @@ def save_ai_decision(db: Session, account: Account, decision: Dict, portfolio: D
         if leverage_val < 1:
             leverage_val = 1
 
+        # Set decision_time to replay date if replay mode is active
+        decision_time = None
+        try:
+            from services.replay_service import is_replay_active, get_current_replay_date
+            if is_replay_active():
+                replay_date = get_current_replay_date()
+                if replay_date:
+                    decision_time = replay_date
+        except Exception:
+            pass  # If replay service not available, use default (current time)
+        
         # Create decision log entry
         decision_log = AIDecisionLog(
             account_id=account.id,
@@ -343,7 +354,8 @@ def save_ai_decision(db: Session, account: Account, decision: Dict, portfolio: D
             total_balance=Decimal(str(portfolio["total_assets"])),
             executed="true" if executed else "false",
             order_id=order_id,
-            leverage=leverage_val
+            leverage=leverage_val,
+            decision_time=decision_time if decision_time else None  # None will use server_default
         )
 
         db.add(decision_log)

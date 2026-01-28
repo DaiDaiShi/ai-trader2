@@ -72,6 +72,8 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null)
   const [accounts, setAccounts] = useState<any[]>([])
   const [accountsLoading, setAccountsLoading] = useState<boolean>(true)
+  const [wsConnected, setWsConnected] = useState(false)
+  const [wsError, setWsError] = useState<string | null>(null)
 
   useEffect(() => {
     let reconnectTimer: NodeJS.Timeout | null = null
@@ -86,6 +88,8 @@ function App() {
         
         const handleOpen = () => {
           console.log('WebSocket connected')
+          setWsConnected(true)
+          setWsError(null)
           // Start with hardcoded default user for paper trading
           ws!.send(JSON.stringify({ type: 'bootstrap', username: 'default', initial_capital: 10000 }))
         }
@@ -99,11 +103,17 @@ function App() {
               }
               if (msg.account) {
                 setAccount(msg.account)
+              } else {
+                // No account available - set error state
+                setWsError('No account found. Please create an account in Settings.')
+                setAccount(null)  // Explicitly set to null
               }
               // refresh accounts list once bootstrapped
               refreshAccounts()
-              // request initial snapshot
-              ws!.send(JSON.stringify({ type: 'get_snapshot' }))
+              // Only request snapshot if we have an account
+              if (msg.account) {
+                ws!.send(JSON.stringify({ type: 'get_snapshot' }))
+              }
             } else if (msg.type === 'snapshot' || msg.type === 'snapshot_full' || msg.type === 'snapshot_fast') {
               setOverview(msg.overview)
               setPositions(msg.positions)
@@ -130,8 +140,14 @@ function App() {
               setAccount(msg.account)
               refreshAccounts()
             } else if (msg.type === 'error') {
-              console.error(msg.message)
-              toast.error(msg.message || 'Order error')
+              console.error('WebSocket error:', msg.message)
+              // Handle bootstrap error about no account
+              if (msg.message && msg.message.includes('No account found')) {
+                setWsError('No account found. Please create an account in Settings.')
+                // Don't break connection - allow user to create account via UI
+              } else {
+                toast.error(msg.message || 'Order error')
+              }
             }
           } catch (err) {
             console.error('Failed to parse WebSocket message:', err)
@@ -140,6 +156,7 @@ function App() {
         
         const handleClose = (event: CloseEvent) => {
           console.log('WebSocket closed:', event.code, event.reason)
+          setWsConnected(false)
           __WS_SINGLETON__ = null
           if (wsRef.current === ws) wsRef.current = null
           
@@ -154,6 +171,7 @@ function App() {
         
         const handleError = (event: Event) => {
           console.error('WebSocket error:', event)
+          setWsConnected(false)
           // Don't show toast for every error to avoid spam
           // toast.error('Connection error')
         }
@@ -264,7 +282,42 @@ function App() {
     }
   }
 
-  if (!user || !account || !overview) return <div className="p-8">Connecting to trading server...</div>
+  if (!user || !account || !overview) {
+    const pageTitle = PAGE_TITLES[currentPage] ?? PAGE_TITLES.portfolio
+    
+    if (wsError) {
+      return (
+        <div className="h-screen flex overflow-hidden">
+          <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onAccountUpdated={handleAccountUpdated} />
+          <div className="flex-1 flex flex-col">
+            <Header title={pageTitle} currentUser={user} currentAccount={account} />
+            <div className="flex-1 flex flex-col items-center justify-center p-8">
+              <div className="text-lg font-semibold text-red-600 mb-2">{wsError}</div>
+              <div className="text-sm text-muted-foreground">
+                Click the Settings icon in the sidebar to create an account.
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="h-screen flex overflow-hidden">
+        <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} onAccountUpdated={handleAccountUpdated} />
+        <div className="flex-1 flex flex-col">
+          <Header title={pageTitle} />
+          <div className="flex-1 flex flex-col items-center justify-center p-8">
+            <div className="text-lg font-semibold mb-2">Connecting to trading server...</div>
+            {!wsConnected && (
+              <div className="text-sm text-muted-foreground mt-2">
+                Make sure the backend server is running on port 5611
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const renderMainContent = () => {
     const refreshData = () => {
@@ -336,9 +389,26 @@ function App() {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+// Prevent multiple root creation (for HMR and StrictMode)
+// Use a module-level variable that's checked before creating root
+const rootElement = document.getElementById('root')
+if (!rootElement) {
+  throw new Error('Root element not found')
+}
+
+// Store root in window to persist across HMR reloads
+// Check window first to avoid creating duplicate roots
+if (!(window as any).__reactRoot) {
+  ;(window as any).__reactRoot = ReactDOM.createRoot(rootElement)
+}
+
+// Get the root instance
+const root = (window as any).__reactRoot
+
+// Render the app (safe to call multiple times during HMR)
+root.render(
   <React.StrictMode>
     <Toaster position="top-right" />
     <App />
-  </React.StrictMode>,
+  </React.StrictMode>
 )

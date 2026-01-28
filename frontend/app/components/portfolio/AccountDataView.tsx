@@ -95,6 +95,7 @@ interface AccountDataViewProps {
   showTradingPanel?: boolean
   accounts?: any[]
   loadingAccounts?: boolean
+  replayState?: { active: boolean; state: any } | null
 }
 
 const API_BASE = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:5611'
@@ -113,7 +114,8 @@ export default function AccountDataView({
   showAssetCurves = true,
   showTradingPanel = false,
   accounts,
-  loadingAccounts
+  loadingAccounts,
+  replayState
 }: AccountDataViewProps) {
 
   const cancelOrder = async (orderId: number) => {

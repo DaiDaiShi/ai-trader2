@@ -312,6 +312,17 @@ def _execute_order(db: Session, order: Order, account: Account, execution_price:
             account.current_cash = float(Decimal(str(account.current_cash)) + cash_gain)
         
         # Create trade record
+        # Set trade_time to replay date if replay mode is active
+        trade_time = None
+        try:
+            from services.replay_service import is_replay_active, get_current_replay_date
+            if is_replay_active():
+                replay_date = get_current_replay_date()
+                if replay_date:
+                    trade_time = replay_date
+        except Exception:
+            pass  # If replay service not available, use default (current time)
+        
         trade = Trade(
             order_id=order.id,
             account_id=account.id,
@@ -322,6 +333,7 @@ def _execute_order(db: Session, order: Order, account: Account, execution_price:
             price=float(execution_price),
             quantity=float(quantity),
             commission=float(commission),
+            trade_time=trade_time if trade_time else None  # None will use server_default
         )
         db.add(trade)
 
@@ -335,6 +347,19 @@ def _execute_order(db: Session, order: Order, account: Account, execution_price:
         db.commit()
         
         logger.info(f"Order {order.order_no} executed: {order.side} {quantity} {order.symbol} @ ${execution_price}")
+        
+        # Broadcast asset curve updates for all timeframes after trade execution
+        try:
+            from api.ws import broadcast_asset_curve_update_sync
+            # Broadcast updates for all timeframes
+            for timeframe in ["5m", "1h", "1d"]:
+                try:
+                    broadcast_asset_curve_update_sync(timeframe)
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast asset curve update for {timeframe}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to broadcast asset curve updates: {e}")
+        
         return True
         
     except Exception as e:

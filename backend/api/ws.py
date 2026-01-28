@@ -90,6 +90,32 @@ async def broadcast_asset_curve_update(timeframe: str = "1h"):
         db.close()
 
 
+def broadcast_asset_curve_update_sync(timeframe: str = "1h"):
+    """Synchronous wrapper for broadcasting asset curve updates"""
+    import asyncio
+    import threading
+    
+    def _run_in_thread():
+        """Run async function in a new thread with its own event loop"""
+        try:
+            asyncio.run(broadcast_asset_curve_update(timeframe))
+        except Exception as e:
+            logging.error(f"Failed to broadcast asset curve update in thread: {e}")
+    
+    try:
+        # Try to get the running event loop (if we're in an async context)
+        try:
+            loop = asyncio.get_running_loop()
+            # If we're in an async context, schedule as a task
+            loop.create_task(broadcast_asset_curve_update(timeframe))
+        except RuntimeError:
+            # No running loop, run in background thread to avoid blocking
+            thread = threading.Thread(target=_run_in_thread, daemon=True)
+            thread.start()
+    except Exception as e:
+        logging.error(f"Failed to broadcast asset curve update (sync): {e}")
+
+
 def get_all_asset_curves_data(db: Session, timeframe: str = "1h"):
     """Get timeframe-based asset curve data for all accounts - WebSocket version
     
@@ -112,12 +138,29 @@ async def _send_snapshot_optimized(db: Session, account_id: int):
     
     positions = list_positions(db, account_id)
     orders = list_orders(db, account_id)
-    trades = (
-        db.query(Trade).filter(Trade.account_id == account_id).order_by(Trade.trade_time.desc()).limit(10).all()  # Reduced from 20 to 10
-    )
-    ai_decisions = (
-        db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account_id).order_by(AIDecisionLog.decision_time.desc()).limit(10).all()  # Reduced from 20 to 10
-    )
+    # Filter trades and AI decisions by replay period if replay mode is active
+    trade_query = db.query(Trade).filter(Trade.account_id == account_id)
+    ai_decision_query = db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account_id)
+    
+    try:
+        from services.replay_service import get_replay_date_range
+        replay_range = get_replay_date_range()
+        if replay_range:
+            start_date, current_date = replay_range
+            trade_query = trade_query.filter(
+                Trade.trade_time >= start_date,
+                Trade.trade_time <= current_date
+            )
+            ai_decision_query = ai_decision_query.filter(
+                AIDecisionLog.decision_time >= start_date,
+                AIDecisionLog.decision_time <= current_date
+            )
+            logger.debug(f"Filtering snapshot data for replay mode: {start_date} to {current_date}")
+    except Exception:
+        pass  # If replay service not available, continue without filter
+    
+    trades = trade_query.order_by(Trade.trade_time.desc()).limit(10).all()  # Reduced from 20 to 10
+    ai_decisions = ai_decision_query.order_by(AIDecisionLog.decision_time.desc()).limit(10).all()  # Reduced from 20 to 10
     
     # Calculate positions MARKET VALUE (equity) and NOTIONAL VALUE (exposure)
     positions_market_value = calc_positions_market_value(db, account_id)
@@ -264,12 +307,29 @@ async def _send_snapshot(db: Session, account_id: int):
         return
     positions = list_positions(db, account_id)
     orders = list_orders(db, account_id)
-    trades = (
-        db.query(Trade).filter(Trade.account_id == account_id).order_by(Trade.trade_time.desc()).limit(20).all()
-    )
-    ai_decisions = (
-        db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account_id).order_by(AIDecisionLog.decision_time.desc()).limit(20).all()
-    )
+    # Filter trades and AI decisions by replay period if replay mode is active
+    trade_query = db.query(Trade).filter(Trade.account_id == account_id)
+    ai_decision_query = db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account_id)
+    
+    try:
+        from services.replay_service import get_replay_date_range
+        replay_range = get_replay_date_range()
+        if replay_range:
+            start_date, current_date = replay_range
+            trade_query = trade_query.filter(
+                Trade.trade_time >= start_date,
+                Trade.trade_time <= current_date
+            )
+            ai_decision_query = ai_decision_query.filter(
+                AIDecisionLog.decision_time >= start_date,
+                AIDecisionLog.decision_time <= current_date
+            )
+            logger.debug(f"Filtering snapshot data for replay mode: {start_date} to {current_date}")
+    except Exception:
+        pass  # If replay service not available, continue without filter
+    
+    trades = trade_query.order_by(Trade.trade_time.desc()).limit(20).all()
+    ai_decisions = ai_decision_query.order_by(AIDecisionLog.decision_time.desc()).limit(20).all()
     
     # Calculate positions MARKET VALUE (equity) and NOTIONAL VALUE (exposure)
     positions_market_value = calc_positions_market_value(db, account_id)
@@ -438,11 +498,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         initial_capital=float(msg.get("initial_capital", 100000))
                     )
                     if not account:
+                        # Send error but keep connection open so user can create account
                         await websocket.send_json({
                             "type": "error",
                             "message": "No account found. Please create an account first."
                         })
-                        break
+                        # Still send user info so frontend knows we're connected
+                        await websocket.send_json({
+                            "type": "bootstrap_ok",
+                            "user": {"id": user.id, "username": user.username},
+                            "account": None  # No account available
+                        })
+                        continue  # Continue loop instead of breaking
                     account_id = account.id
                     manager.register(account_id, websocket)
                     

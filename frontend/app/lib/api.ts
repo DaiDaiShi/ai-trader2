@@ -28,10 +28,18 @@ export async function apiRequest(
     try {
       const errorData = await response.json()
       const errorMessage = errorData.detail || errorData.message || `HTTP error! status: ${response.status}`
-      throw new Error(errorMessage)
-    } catch (e) {
+      const error = new Error(errorMessage)
+      ;(error as any).status = response.status
+      ;(error as any).data = errorData
+      throw error
+    } catch (e: any) {
       // If parsing fails, throw generic error
-      throw new Error(`HTTP error! status: ${response.status}`)
+      if (e instanceof Error && e.message !== `HTTP error! status: ${response.status}`) {
+        throw e
+      }
+      const error = new Error(`HTTP error! status: ${response.status}`)
+      ;(error as any).status = response.status
+      throw error
     }
   }
   
@@ -286,6 +294,58 @@ export async function updateTradingInterval(intervalSeconds: number): Promise<{ 
   const response = await apiRequest('/config/trading-interval', {
     method: 'PUT',
     body: JSON.stringify({ interval_seconds: intervalSeconds })
+  })
+  return response.json()
+}
+
+// Replay/Backtest API
+export interface ReplayState {
+  active: boolean
+  state: {
+    start_date: string
+    end_date: string
+    current_date: string
+    speed_multiplier: number
+    progress?: number
+  } | null
+}
+
+export async function startReplay(startDate: string, endDate: string, speedMultiplier: number = 1.0, tradingIntervalDays: number = 1): Promise<{ success: boolean; message: string; state: any }> {
+  try {
+    const response = await apiRequest('/replay/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        start_date: startDate,
+        end_date: endDate,
+        speed_multiplier: speedMultiplier,
+        trading_interval_days: tradingIntervalDays
+      })
+    })
+    const data = await response.json()
+    console.log('Replay start API response:', data)
+    return data
+  } catch (error: any) {
+    console.error('Replay start API error:', error)
+    throw error
+  }
+}
+
+export async function stopReplay(): Promise<{ success: boolean; message: string }> {
+  const response = await apiRequest('/replay/stop', {
+    method: 'POST'
+  })
+  return response.json()
+}
+
+export async function getReplayState(): Promise<ReplayState> {
+  const response = await apiRequest('/replay/state')
+  return response.json()
+}
+
+export async function advanceReplay(seconds: number = 300): Promise<{ success: boolean; current_date: string | null; message: string }> {
+  const response = await apiRequest('/replay/advance', {
+    method: 'POST',
+    body: JSON.stringify({ seconds })
   })
   return response.json()
 }

@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5621,
+    strictPort: false, // Allow fallback to next available port
     proxy: {
       '/api': {
         target: 'http://localhost:5611',

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Moon, Sun } from 'lucide-react'
+import { Moon, Sun, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import ReplayModeDialog from '@/components/replay/ReplayModeDialog'
 
 interface User {
   id: number
@@ -30,6 +31,7 @@ export default function Header({ title = 'Crypto Paper Trading', currentUser, cu
     if (typeof document === 'undefined') return 'dark'
     return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
   })
+  const [replayDialogOpen, setReplayDialogOpen] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -65,6 +67,15 @@ export default function Header({ title = 'Crypto Paper Trading', currentUser, cu
         
         <div className="flex items-center gap-4">
           <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setReplayDialogOpen(true)}
+            className="flex items-center gap-2"
+          >
+            <History className="h-4 w-4" />
+            Replay Mode
+          </Button>
+          <Button
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
@@ -73,6 +84,8 @@ export default function Header({ title = 'Crypto Paper Trading', currentUser, cu
             {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
         </div>
+        
+        <ReplayModeDialog open={replayDialogOpen} onOpenChange={setReplayDialogOpen} />
       </div>
     </header>
   )
