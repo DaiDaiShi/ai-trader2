@@ -258,6 +258,13 @@ export async function updateAccount(accountId: number, account: TradingAccountUp
   return response.json()
 }
 
+export async function deleteAccount(accountId: number): Promise<{ message: string }> {
+  const response = await apiRequest(`/account/${accountId}`, {
+    method: 'DELETE'
+  })
+  return response.json()
+}
+
 export async function getTradingInterval(): Promise<{ interval_seconds: number }> {
   const response = await apiRequest('/config/trading-interval')
   return response.json()

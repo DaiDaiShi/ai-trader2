@@ -430,13 +430,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     username = msg.get("username", "default")
                     user = get_or_create_user(db, username)
                     
-                    # Get or create default account for this user
+                    # Get existing account for this user (don't auto-create)
                     account = get_or_create_default_account(
                         db, 
                         user.id,
                         account_name=f"{username} AI Trader",
                         initial_capital=float(msg.get("initial_capital", 100000))
                     )
+                    if not account:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "No account found. Please create an account first."
+                        })
+                        break
                     account_id = account.id
                     manager.register(account_id, websocket)
                     

@@ -89,25 +89,8 @@ def on_startup():
             db.commit()
             db.refresh(default_user)
         
-        # Ensure default user has at least one account
-        default_accounts = db.query(Account).filter(Account.user_id == default_user.id).all()
-        if len(default_accounts) == 0:
-            # Create default account
-            default_account = Account(
-                user_id=default_user.id,
-                version="v1",
-                name="GPT",
-                account_type="AI",
-                model="gpt-5-mini",
-                base_url="https://api.openai.com/v1",
-                api_key="default-key-please-update-in-settings",
-                initial_capital=10000.0,  # $10,000 starting capital for crypto trading
-                current_cash=10000.0,
-                frozen_cash=0.0,
-                is_active="true"
-            )
-            db.add(default_account)
-            db.commit()
+        # Don't automatically create default account - let users create accounts manually
+        # This prevents unwanted accounts from being created automatically
     finally:
         db.close()
     

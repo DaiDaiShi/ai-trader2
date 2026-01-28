@@ -302,6 +302,57 @@ async def update_account_settings(account_id: int, payload: dict, db: Session = 
         raise HTTPException(status_code=500, detail=f"Failed to update account: {str(e)}")
 
 
+@router.delete("/{account_id}")
+async def delete_account(account_id: int, db: Session = Depends(get_db)):
+    """Delete an account and all its related data (trades, orders, positions)"""
+    try:
+        logger.info(f"Deleting account {account_id}")
+        
+        account = db.query(Account).filter(Account.id == account_id).first()
+        
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        account_name = account.name
+        
+        # Delete related data: trades, orders, positions
+        from database.models import Trade, Order, Position
+        
+        # Delete trades
+        trades_deleted = db.query(Trade).filter(Trade.account_id == account_id).delete(synchronize_session=False)
+        logger.info(f"Deleted {trades_deleted} trades for account {account_id}")
+        
+        # Delete orders
+        orders_deleted = db.query(Order).filter(Order.account_id == account_id).delete(synchronize_session=False)
+        logger.info(f"Deleted {orders_deleted} orders for account {account_id}")
+        
+        # Delete positions
+        positions_deleted = db.query(Position).filter(Position.account_id == account_id).delete(synchronize_session=False)
+        logger.info(f"Deleted {positions_deleted} positions for account {account_id}")
+        
+        # Delete the account itself
+        db.delete(account)
+        db.commit()
+        
+        logger.info(f"Account {account_id} ({account_name}) deleted successfully")
+        
+        # Reset auto trading job after account deletion
+        try:
+            from services.scheduler import reset_auto_trading_job
+            reset_auto_trading_job()
+            logger.info("Auto trading job reset successfully after account deletion")
+        except Exception as e:
+            logger.warning(f"Failed to reset auto trading job after account deletion: {e}")
+        
+        return {"message": f"Account {account_name} deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete account: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete account: {str(e)}")
+
+
 @router.get("/asset-curve/timeframe")
 async def get_asset_curve_by_timeframe(
     timeframe: str = "1d",

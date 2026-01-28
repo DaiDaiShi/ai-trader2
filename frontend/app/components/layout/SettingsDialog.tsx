@@ -9,11 +9,12 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, Pencil } from 'lucide-react'
+import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { 
   getAccounts as getAccounts,
   createAccount as createAccount,
   updateAccount as updateAccount,
+  deleteAccount as deleteAccount,
   testLLMConnection,
   getTradingInterval,
   updateTradingInterval,
@@ -463,6 +464,30 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
                             size="sm"
                           >
                             <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            onClick={async () => {
+                              if (!confirm(`Are you sure you want to delete "${account.name}"? This will permanently delete the account and all its trading history, positions, and orders. This action cannot be undone.`)) {
+                                return
+                              }
+                              try {
+                                setLoading(true)
+                                await deleteAccount(account.id)
+                                await loadAccounts()
+                                toast.success(`Account "${account.name}" deleted successfully`)
+                                onAccountUpdated?.()
+                              } catch (error) {
+                                console.error('Failed to delete account:', error)
+                                toast.error('Failed to delete account')
+                              } finally {
+                                setLoading(false)
+                              }
+                            }}
+                            variant="destructive"
+                            size="sm"
+                            disabled={loading}
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
                       </div>

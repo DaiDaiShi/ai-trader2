@@ -244,10 +244,13 @@ async def get_or_create_default(
     session_token: str,
     db: Session = Depends(get_db)
 ):
-    """Get or create default account (for backward compatibility)"""
+    """Get default account (returns 404 if no account exists - no auto-creation)"""
     try:
         user_id = await get_current_user_id(session_token, db)
         account = get_or_create_default_account(db, user_id)
+        
+        if not account:
+            raise HTTPException(status_code=404, detail="No account found. Please create an account first.")
         
         return AccountOut(
             id=account.id,
