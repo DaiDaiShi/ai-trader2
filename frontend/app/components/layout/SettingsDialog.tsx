@@ -15,10 +15,19 @@ import {
   createAccount as createAccount,
   updateAccount as updateAccount,
   testLLMConnection,
+  getTradingInterval,
+  updateTradingInterval,
   type TradingAccount,
   type TradingAccountCreate,
   type TradingAccountUpdate
 } from '@/lib/api'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface SettingsDialogProps {
   open: boolean
@@ -36,6 +45,7 @@ interface AIAccountCreate extends TradingAccountCreate {
   model?: string
   base_url?: string
   api_key?: string
+  is_active?: boolean
 }
 
 export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }: SettingsDialogProps) {
@@ -46,6 +56,8 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
   const [error, setError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
   const [testing, setTesting] = useState(false)
+  const [tradingInterval, setTradingInterval] = useState<number>(300) // Default 5 minutes
+  const [savingInterval, setSavingInterval] = useState(false)
   const [newAccount, setNewAccount] = useState<AIAccountCreate>({
     name: '',
     model: '',
@@ -72,9 +84,40 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
     }
   }
 
+  const loadTradingInterval = async () => {
+    try {
+      const data = await getTradingInterval()
+      setTradingInterval(data.interval_seconds)
+    } catch (error) {
+      console.error('Failed to load trading interval:', error)
+    }
+  }
+
+  const handleUpdateTradingInterval = async (intervalSeconds: number) => {
+    try {
+      setSavingInterval(true)
+      await updateTradingInterval(intervalSeconds)
+      setTradingInterval(intervalSeconds)
+      toast.success(`Trading interval updated to ${formatInterval(intervalSeconds)}`)
+      onAccountUpdated?.()
+    } catch (error) {
+      console.error('Failed to update trading interval:', error)
+      toast.error('Failed to update trading interval')
+    } finally {
+      setSavingInterval(false)
+    }
+  }
+
+  const formatInterval = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`
+    if (seconds < 3600) return `${seconds / 60} min`
+    return `${seconds / 3600}h`
+  }
+
   useEffect(() => {
     if (open) {
       loadAccounts()
+      loadTradingInterval()
       setError(null)
       setTestResult(null)
       setShowAddForm(false)
@@ -197,7 +240,7 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
       console.log('Updating account with data:', editAccount)
       await updateAccount(editingId, editAccount)
       setEditingId(null)
-      setEditAccount({ name: '', model: '', base_url: '', api_key: '' })
+      setEditAccount({ name: '', model: '', base_url: '', api_key: 'default-key-please-update-in-settings', is_active: true })
       setTestResult(null)
       await loadAccounts()
       
@@ -224,12 +267,13 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
       model: account.model || '',
       base_url: account.base_url || '',
       api_key: account.api_key || '',
+      is_active: account.is_active ?? true,
     })
   }
 
   const cancelEdit = () => {
     setEditingId(null)
-    setEditAccount({ name: '', model: '', base_url: '', api_key: 'default-key-please-update-in-settings' })
+    setEditAccount({ name: '', model: '', base_url: '', api_key: 'default-key-please-update-in-settings', is_active: true })
     setTestResult(null)
     setError(null)
   }
@@ -251,6 +295,33 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
         )}
 
         <div className="space-y-6">
+          {/* Trading Interval Configuration */}
+          <div className="space-y-3 border-b pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-medium">Trading Interval</h3>
+                <p className="text-xs text-muted-foreground">
+                  How often the system will execute trades for active accounts
+                </p>
+              </div>
+              <Select
+                value={tradingInterval.toString()}
+                onValueChange={(value) => handleUpdateTradingInterval(parseInt(value))}
+                disabled={savingInterval}
+              >
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="60">1 minute</SelectItem>
+                  <SelectItem value="300">5 minutes</SelectItem>
+                  <SelectItem value="1800">30 minutes</SelectItem>
+                  <SelectItem value="3600">1 hour</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           {/* Existing Accounts */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -285,6 +356,26 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
                             onChange={(e) => setEditAccount({ ...editAccount, model: e.target.value })}
                           />
                         </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id={`is-active-${account.id}`}
+                            checked={(() => {
+                              // Use editAccount.is_active if set, otherwise fall back to account.is_active
+                              return editAccount.is_active !== undefined 
+                                ? editAccount.is_active 
+                                : (account.is_active ?? true)
+                            })()}
+                            onChange={(e) => {
+                              const isActive = e.target.checked
+                              setEditAccount({ ...editAccount, is_active: isActive })
+                            }}
+                            className="h-4 w-4"
+                          />
+                          <label htmlFor={`is-active-${account.id}`} className="text-sm text-muted-foreground cursor-pointer">
+                            Auto trading enabled
+                          </label>
+                        </div>
                         <Input
                           placeholder="Base URL"
                           value={editAccount.base_url || ''}
@@ -317,7 +408,16 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
                     ) : (
                       <div className="flex items-center justify-between">
                         <div className="space-y-1 flex-1">
-                          <div className="font-medium">{account.name}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-medium">{account.name}</div>
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              account.is_active 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-gray-100 text-gray-600'
+                            }`}>
+                              {account.is_active ? 'Active' : 'Paused'}
+                            </span>
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             {account.model ? `Model: ${account.model}` : 'No model configured'}
                           </div>
@@ -336,6 +436,27 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated }:
                           </div>
                         </div>
                         <div className="flex gap-2">
+                          <Button
+                            onClick={async () => {
+                              try {
+                                setLoading(true)
+                                await updateAccount(account.id, { is_active: !account.is_active })
+                                await loadAccounts()
+                                toast.success(`Account ${!account.is_active ? 'resumed' : 'paused'} successfully`)
+                                onAccountUpdated?.()
+                              } catch (error) {
+                                console.error('Failed to toggle account status:', error)
+                                toast.error('Failed to update account status')
+                              } finally {
+                                setLoading(false)
+                              }
+                            }}
+                            variant={account.is_active ? "outline" : "default"}
+                            size="sm"
+                            disabled={loading}
+                          >
+                            {account.is_active ? 'Pause' : 'Resume'}
+                          </Button>
                           <Button
                             onClick={() => startEdit(account)}
                             variant="outline"

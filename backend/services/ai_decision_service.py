@@ -366,13 +366,15 @@ def get_active_ai_accounts(db: Session) -> List[Account]:
     ).all()
 
     if not accounts:
+        logger.debug("No active AI accounts found (is_active='true' and account_type='AI')")
         return []
 
     # Filter out default accounts
     valid_accounts = [acc for acc in accounts if not _is_default_api_key(acc.api_key)]
 
     if not valid_accounts:
-        logger.debug("No valid AI accounts found (all using default keys)")
+        logger.debug(f"Found {len(accounts)} active AI account(s) but all using default keys - skipping")
         return []
 
+    logger.debug(f"Found {len(valid_accounts)} valid active AI account(s): {[acc.name for acc in valid_accounts]}")
     return valid_accounts

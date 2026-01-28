@@ -542,29 +542,78 @@ def reset_auto_trading_job():
         # Import constants from auto_trader module
         from services.auto_trader import AI_TRADE_JOB_ID
         from services.trading_commands import place_ai_driven_crypto_order
+        from database.models import SystemConfig
         
-        # Define interval (5 minutes)
+        # Get interval from SystemConfig, default to 5 minutes (300 seconds)
         AI_TRADE_INTERVAL_SECONDS = 300
+        db = SessionLocal()
+        try:
+            cfg = db.query(SystemConfig).filter(SystemConfig.key == "auto_trade_interval_seconds").first()
+            if cfg and cfg.value:
+                try:
+                    interval_val = int(cfg.value)
+                    # Clamp to reasonable values: 60 seconds (1 min) to 3600 seconds (1 hour)
+                    if interval_val < 60:
+                        interval_val = 60
+                    elif interval_val > 3600:
+                        interval_val = 3600
+                    AI_TRADE_INTERVAL_SECONDS = interval_val
+                    logger.info(f"Loaded trading interval from config: {AI_TRADE_INTERVAL_SECONDS}s")
+                except (TypeError, ValueError):
+                    logger.warning(f"Invalid auto_trade_interval_seconds value '{cfg.value}', using default 300s")
+            else:
+                # Set default if not exists
+                default_cfg = SystemConfig(
+                    key="auto_trade_interval_seconds",
+                    value="300",
+                    description="Auto trading interval in seconds (60-3600)"
+                )
+                db.add(default_cfg)
+                db.commit()
+                logger.info("Created default auto_trade_interval_seconds config: 300s")
+        finally:
+            db.close()
+        
+        logger.info("Resetting auto trading job...")
         
         # Ensure market data is ready before scheduling trading tasks
-        _ensure_market_data_ready()
-
+        try:
+            _ensure_market_data_ready()
+            logger.info("Market data ready check passed")
+        except Exception as market_err:
+            logger.error(f"Market data readiness check failed: {market_err}")
+            raise
+        
         # Ensure scheduler is started
         if not task_scheduler.is_running():
             task_scheduler.start()
             logger.info("Started scheduler for auto trading job reset")
+        else:
+            logger.info("Scheduler already running")
 
         # Remove existing auto trading job if it exists
         if task_scheduler.scheduler and task_scheduler.scheduler.get_job(AI_TRADE_JOB_ID):
             task_scheduler.remove_task(AI_TRADE_JOB_ID)
             logger.info(f"Removed existing auto trading job: {AI_TRADE_JOB_ID}")
+        else:
+            logger.info(f"No existing job found for {AI_TRADE_JOB_ID}")
         
         # Re-add the auto trading job with updated configuration
+        logger.info(f"Adding new auto trading job with interval {AI_TRADE_INTERVAL_SECONDS}s")
+        # Pass function directly and use kwargs - APScheduler will pass kwargs to the function
         task_scheduler.add_interval_task(
-            task_func=lambda: place_ai_driven_crypto_order(max_ratio=0.2),
+            task_func=place_ai_driven_crypto_order,
             interval_seconds=AI_TRADE_INTERVAL_SECONDS,
-            task_id=AI_TRADE_JOB_ID
+            task_id=AI_TRADE_JOB_ID,
+            max_ratio=0.2
         )
+        
+        # Verify the job was added
+        if task_scheduler.scheduler and task_scheduler.scheduler.get_job(AI_TRADE_JOB_ID):
+            job = task_scheduler.scheduler.get_job(AI_TRADE_JOB_ID)
+            logger.info(f"✅ Auto trading job successfully added: {AI_TRADE_JOB_ID}, next run: {job.next_run_time}")
+        else:
+            logger.error(f"❌ Failed to verify auto trading job was added: {AI_TRADE_JOB_ID}")
         
         # Trigger one immediate execution in background so API calls don't block
         import threading
@@ -572,14 +621,15 @@ def reset_auto_trading_job():
             try:
                 logger.info("Triggering immediate AI trade after account save/update")
                 place_ai_driven_crypto_order(max_ratio=0.2)
+                logger.info("Immediate AI trade execution completed")
             except Exception as run_err:
-                logger.error(f"Immediate AI trade failed: {run_err}")
+                logger.error(f"Immediate AI trade failed: {run_err}", exc_info=True)
         threading.Thread(target=_run_once, name="ai_trade_run_once", daemon=True).start()
 
         # Log current jobs for verification
         jobs = task_scheduler.get_job_info()
-        logger.info(f"Auto trading job reset successfully - interval: {AI_TRADE_INTERVAL_SECONDS}s; Jobs: {jobs}")
+        logger.info(f"Auto trading job reset successfully - interval: {AI_TRADE_INTERVAL_SECONDS}s; All jobs: {jobs}")
         
     except Exception as e:
-        logger.error(f"Failed to reset auto trading job: {e}")
+        logger.error(f"Failed to reset auto trading job: {e}", exc_info=True)
         raise

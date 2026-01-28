@@ -171,6 +171,7 @@ export interface TradingAccountUpdate {
   model?: string
   base_url?: string
   api_key?: string
+  is_active?: boolean
 }
 
 
@@ -249,8 +250,23 @@ export async function updateAccount(accountId: number, account: TradingAccountUp
       name: account.name,
       model: account.model,
       base_url: account.base_url,
-      api_key: account.api_key
+      api_key: account.api_key,
+      // Only send is_active if provided so we don't overwrite unintentionally
+      ...(account.is_active !== undefined ? { is_active: account.is_active } : {})
     })
+  })
+  return response.json()
+}
+
+export async function getTradingInterval(): Promise<{ interval_seconds: number }> {
+  const response = await apiRequest('/config/trading-interval')
+  return response.json()
+}
+
+export async function updateTradingInterval(intervalSeconds: number): Promise<{ interval_seconds: number; message: string }> {
+  const response = await apiRequest('/config/trading-interval', {
+    method: 'PUT',
+    body: JSON.stringify({ interval_seconds: intervalSeconds })
   })
   return response.json()
 }

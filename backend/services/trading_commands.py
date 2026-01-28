@@ -82,12 +82,15 @@ def _select_side(db: Session, account: Account, symbol: str, max_value: float) -
 
 def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
     """Place crypto order based on AI model decision for all active accounts"""
+    logger.info(f"🔄 Auto trading job triggered (max_ratio={max_ratio})")
     db = SessionLocal()
     try:
         accounts = get_active_ai_accounts(db)
         if not accounts:
-            logger.debug("No available accounts, skipping AI trading")
+            logger.info("No active AI accounts found, skipping AI trading")
             return
+        
+        logger.info(f"Found {len(accounts)} active AI account(s) for trading")
 
         # Get latest market prices once for all accounts
         prices = _get_market_prices(AI_TRADING_SYMBOLS)

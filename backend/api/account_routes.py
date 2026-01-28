@@ -28,10 +28,11 @@ def get_db():
 
 @router.get("/list")
 async def list_all_accounts(db: Session = Depends(get_db)):
-    """Get all active accounts (for paper trading demo)"""
+    """Get all accounts (including paused ones)"""
     try:
         from database.models import User
-        accounts = db.query(Account).filter(Account.is_active == "true").all()
+        # Don't filter by is_active - show all accounts so paused accounts remain visible
+        accounts = db.query(Account).all()
         
         result = []
         for account in accounts:
@@ -59,13 +60,10 @@ async def list_all_accounts(db: Session = Depends(get_db)):
 
 @router.get("/{account_id}/overview")
 async def get_specific_account_overview(account_id: int, db: Session = Depends(get_db)):
-    """Get overview for a specific account"""
+    """Get overview for a specific account (including paused ones)"""
     try:
-        # Get the specific account
-        account = db.query(Account).filter(
-            Account.id == account_id,
-            Account.is_active == "true"
-        ).first()
+        # Get the specific account - don't filter by is_active so paused accounts can be viewed
+        account = db.query(Account).filter(Account.id == account_id).first()
         
         if not account:
             raise HTTPException(status_code=404, detail="Account not found")
@@ -226,10 +224,8 @@ async def update_account_settings(account_id: int, payload: dict, db: Session = 
     try:
         logger.info(f"Updating account {account_id} with payload: {payload}")
         
-        account = db.query(Account).filter(
-            Account.id == account_id,
-            Account.is_active == "true"
-        ).first()
+        # Allow updating accounts regardless of is_active status (so we can pause/resume)
+        account = db.query(Account).filter(Account.id == account_id).first()
         
         if not account:
             raise HTTPException(status_code=404, detail="Account not found")
@@ -253,18 +249,34 @@ async def update_account_settings(account_id: int, payload: dict, db: Session = 
         if "api_key" in payload:
             account.api_key = payload["api_key"]
             logger.info(f"Updated api_key (length: {len(payload['api_key']) if payload['api_key'] else 0})")
+
+        # Optional: pause / resume this account
+        is_active_changed = False
+        if "is_active" in payload:
+            # Accept booleans or string flags from the frontend
+            is_active_val = payload["is_active"]
+            new_is_active_str = "true" if bool(is_active_val) else "false"
+            if account.is_active != new_is_active_str:
+                is_active_changed = True
+                account.is_active = new_is_active_str
+                logger.info(f"Updated is_active to: {account.is_active} for account {account_id} (was: {account.is_active if not is_active_changed else 'changed'})")
         
         db.commit()
         db.refresh(account)
         logger.info(f"Account {account_id} updated successfully")
         
-        # Reset auto trading job after account update
+        # Only reset auto trading job if account settings changed (not just pause/resume)
+        # The scheduler job doesn't need to be reset for pause/resume since get_active_ai_accounts
+        # already filters by is_active. However, we reset it anyway to ensure consistency,
+        # but with better error handling.
         try:
             from services.scheduler import reset_auto_trading_job
             reset_auto_trading_job()
             logger.info("Auto trading job reset successfully after account update")
         except Exception as e:
-            logger.warning(f"Failed to reset auto trading job: {e}")
+            logger.error(f"Failed to reset auto trading job: {e}", exc_info=True)
+            # Don't fail the request if scheduler reset fails - account update succeeded
+            # The scheduler job should still work if it was already running
         
         from database.models import User
         user = db.query(User).filter(User.id == account.user_id).first()
@@ -314,8 +326,8 @@ async def get_asset_curve_by_timeframe(
         }
         period = timeframe_map[timeframe]
         
-        # Get all active accounts
-        accounts = db.query(Account).filter(Account.is_active == "true").all()
+        # Get all accounts (including paused ones) - is_active only affects trading, not history display
+        accounts = db.query(Account).all()
         if not accounts:
             return []
         
@@ -339,6 +351,7 @@ async def get_asset_curve_by_timeframe(
                 "profit_percentage": 0.0,
                 "cash": float(account.current_cash),
                 "positions_value": 0.0,
+                "is_active": account.is_active == "true",
             } for account in accounts]
         
         # Fetch kline data for all symbols (20 points)

@@ -13,6 +13,7 @@ import {
 } from 'chart.js'
 import { Card } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { getTradingInterval } from '@/lib/api'
 
 // 注册Chart.js组件
 ChartJS.register(
@@ -38,6 +39,7 @@ interface AssetCurveData {
   is_initial?: boolean
   user_id: number
   username: string
+  is_active?: boolean
 }
 
 interface AssetCurveProps {
@@ -53,6 +55,16 @@ export default function AssetCurve({ data: initialData, wsRef }: AssetCurveProps
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
+  const [tradingInterval, setTradingInterval] = useState<number>(300) // Default 5 minutes
+
+  // Load trading interval
+  useEffect(() => {
+    getTradingInterval().then(result => {
+      setTradingInterval(result.interval_seconds)
+    }).catch(err => {
+      console.error('Failed to load trading interval:', err)
+    })
+  }, [])
 
   // Listen for WebSocket asset curve updates
   useEffect(() => {
@@ -303,28 +315,49 @@ export default function AssetCurve({ data: initialData, wsRef }: AssetCurveProps
                 username,
                 profit,
                 profitPercentage,
+                latestData, // Include latestData so we can access is_active
               }
             })
             .sort((a, b) => b.profit - a.profit)
-            .map((account, index) => (
-              <div 
-                key={account.username} 
-                className="bg-secondary px-4 py-3 rounded-lg flex items-center gap-3"
-              >
-                <div className="text-lg font-bold text-primary">#{index + 1}</div>
-                <div>
-                  <div className="text-xs font-medium text-secondary-foreground">
-                    {account.username.replace('default_', '').toUpperCase()}
-                  </div>
-                  <div className={`text-lg font-bold ${account.profit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                    {account.profit >= 0 ? '+' : ''}${account.profit.toLocaleString('en-US', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })} ({account.profit >= 0 ? '+' : ''}{account.profitPercentage.toFixed(2)}%)
+            .map((account, index) => {
+              const isActive = account.latestData?.is_active ?? true
+              const formatInterval = (seconds: number): string => {
+                if (seconds < 60) return `${seconds}s`
+                if (seconds < 3600) return `${seconds / 60} min`
+                return `${seconds / 3600}h`
+              }
+              return (
+                <div 
+                  key={account.username} 
+                  className="bg-secondary px-4 py-3 rounded-lg flex items-center gap-3"
+                >
+                  <div className="text-lg font-bold text-primary">#{index + 1}</div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="text-xs font-medium text-secondary-foreground">
+                        {account.username.replace('default_', '').toUpperCase()}
+                      </div>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        isActive 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {isActive ? 'Active' : 'Paused'}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatInterval(tradingInterval)}
+                      </span>
+                    </div>
+                    <div className={`text-lg font-bold ${account.profit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {account.profit >= 0 ? '+' : ''}${account.profit.toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })} ({account.profit >= 0 ? '+' : ''}{account.profitPercentage.toFixed(2)}%)
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              )
+            })
           }
         </div>
       </div>

@@ -25,12 +25,12 @@ def get_all_asset_curves_data_new(db: Session, timeframe: str = "1h") -> List[Di
         List of asset curve data points with timestamp, account info, and asset values
     """
     try:
-        # Step 1: Get all active accounts
-        accounts = db.query(Account).filter(Account.is_active == "true").all()
+        # Step 1: Get all accounts (including paused ones) - is_active only affects trading, not history display
+        accounts = db.query(Account).all()
         if not accounts:
             return []
         
-        logging.info(f"Found {len(accounts)} active accounts")
+        logging.info(f"Found {len(accounts)} accounts (including paused)")
         
         # Step 2: Get all unique symbols from all account trades
         symbols_query = db.query(Trade.symbol, Trade.market).distinct().all()
@@ -53,6 +53,7 @@ def get_all_asset_curves_data_new(db: Session, timeframe: str = "1h") -> List[Di
                 "profit_percentage": 0.0,
                 "cash": float(account.initial_capital),
                 "positions_value": 0.0,
+                "is_active": account.is_active == "true",
             } for account in accounts]
         
         logging.info(f"Found {len(unique_symbols)} unique symbols: {unique_symbols}")
@@ -83,6 +84,7 @@ def get_all_asset_curves_data_new(db: Session, timeframe: str = "1h") -> List[Di
                 "profit_percentage": 0.0,
                 "cash": float(account.initial_capital),
                 "positions_value": 0.0,
+                "is_active": account.is_active == "true",
             } for account in accounts]
         
         # Step 4: Get common timestamps from market data
@@ -154,6 +156,7 @@ def _create_account_timeline(
             "profit_percentage": 0.0,
             "cash": float(account.initial_capital),
             "positions_value": 0.0,
+            "is_active": account.is_active == "true",
         } for i, ts in enumerate(timestamps)]
     
     # Calculate holdings and cash at each timestamp
@@ -269,6 +272,7 @@ def _create_account_timeline(
             "profit_percentage": profit_percentage,
             "cash": current_cash,
             "positions_value": positions_value,
+            "is_active": account.is_active == "true",
         })
     
     return timeline
@@ -287,11 +291,8 @@ def get_account_asset_curve(db: Session, account_id: int, timeframe: str = "1h")
         List of asset curve data points for the account
     """
     try:
-        # Get the specific account
-        account = db.query(Account).filter(
-            Account.id == account_id,
-            Account.is_active == "true"
-        ).first()
+        # Get the specific account - don't filter by is_active so paused accounts can be viewed
+        account = db.query(Account).filter(Account.id == account_id).first()
         
         if not account:
             return []
@@ -320,6 +321,7 @@ def get_account_asset_curve(db: Session, account_id: int, timeframe: str = "1h")
                 "profit_percentage": 0.0,
                 "cash": float(account.initial_capital),
                 "positions_value": 0.0,
+                "is_active": account.is_active == "true",
             }]
         
         # Get latest 20 close prices for account's symbols
@@ -347,6 +349,7 @@ def get_account_asset_curve(db: Session, account_id: int, timeframe: str = "1h")
                 "profit_percentage": 0.0,
                 "cash": float(account.initial_capital),
                 "positions_value": 0.0,
+                "is_active": account.is_active == "true",
             }]
         
         # Get timestamps
