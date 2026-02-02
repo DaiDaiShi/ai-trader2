@@ -8,7 +8,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from database.connection import SessionLocal
-from database.models import SystemConfig, Account, Position, Order, Trade
+from database.models import SystemConfig, Account, Position, Order, Trade, AIDecisionLog
 from services.market_data import get_kline_data
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,10 @@ def reset_all_accounts_for_replay(db: Session, trading_interval_seconds: int = 8
                 account.frozen_cash = Decimal('0.00')
                 account.margin_used = Decimal('0.00')
                 
-                # Delete trades first (they reference orders)
+                # Delete AI decisions first (they may reference orders)
+                ai_decisions_deleted = db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account.id).delete()
+                
+                # Delete trades (they reference orders)
                 trades_deleted = db.query(Trade).filter(Trade.account_id == account.id).delete()
                 
                 # Delete orders (they reference positions)
@@ -83,8 +86,8 @@ def reset_all_accounts_for_replay(db: Session, trading_interval_seconds: int = 8
                 
                 logger.info(
                     f"Reset account {account.name} (ID: {account.id}): "
-                    f"cash=${account.initial_capital}, deleted {positions_deleted} positions, "
-                    f"{orders_deleted} orders, {trades_deleted} trades"
+                    f"cash=${account.initial_capital}, deleted {ai_decisions_deleted} AI decisions, "
+                    f"{positions_deleted} positions, {orders_deleted} orders, {trades_deleted} trades"
                 )
             except Exception as account_err:
                 logger.error(f"Failed to reset account {account.name} (ID: {account.id}): {account_err}", exc_info=True)
@@ -260,11 +263,24 @@ def get_historical_price(symbol: str, market: str, timestamp: datetime) -> Optio
     
     global _replay_state
     
+    # Normalize timestamp to be timezone-naive for comparison
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.replace(tzinfo=None)
+    
     # Ensure timestamp is within replay period
-    if timestamp < _replay_state['start_date']:
-        timestamp = _replay_state['start_date']
-    if timestamp > _replay_state['current_date']:
-        timestamp = _replay_state['current_date']
+    start_date = _replay_state['start_date']
+    current_date = _replay_state['current_date']
+    
+    # Normalize state dates to be timezone-naive
+    if start_date.tzinfo is not None:
+        start_date = start_date.replace(tzinfo=None)
+    if current_date.tzinfo is not None:
+        current_date = current_date.replace(tzinfo=None)
+    
+    if timestamp < start_date:
+        timestamp = start_date
+    if timestamp > current_date:
+        timestamp = current_date
     
     # Use daily kline data - find the closest daily candle
     # Round timestamp to start of day for daily candles

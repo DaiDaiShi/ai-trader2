@@ -595,6 +595,94 @@ async def get_asset_curve_by_timeframe(
         raise HTTPException(status_code=500, detail=f"Failed to get asset curve for timeframe: {str(e)}")
 
 
+@router.get("/debug/ai-status")
+async def get_ai_trading_status(db: Session = Depends(get_db)):
+    """Debug endpoint to check AI trading status and diagnose issues"""
+    try:
+        from services.ai_decision_service import get_active_ai_accounts, DEMO_API_KEYS
+        
+        # Get all accounts
+        all_accounts = db.query(Account).all()
+        
+        # Get active AI accounts
+        active_ai_accounts = get_active_ai_accounts(db)
+        
+        # Build detailed status for each account
+        accounts_status = []
+        for account in all_accounts:
+            is_active = account.is_active == "true"
+            is_ai_type = account.account_type == "AI"
+            has_valid_key = account.api_key not in DEMO_API_KEYS
+            
+            # Determine why account might not be trading
+            issues = []
+            if not is_active:
+                issues.append("Account is paused (is_active=false)")
+            if not is_ai_type:
+                issues.append(f"Account type is '{account.account_type}', not 'AI'")
+            if not has_valid_key:
+                issues.append("Using default/empty API key")
+            
+            accounts_status.append({
+                "id": account.id,
+                "name": account.name,
+                "is_active": is_active,
+                "account_type": account.account_type,
+                "model": account.model,
+                "base_url": account.base_url,
+                "has_api_key": bool(account.api_key) and account.api_key not in DEMO_API_KEYS,
+                "api_key_preview": f"{account.api_key[:8]}...{account.api_key[-4:]}" if account.api_key and len(account.api_key) > 12 else "(too short or empty)",
+                "can_trade": is_active and is_ai_type and has_valid_key,
+                "issues": issues if issues else ["Ready to trade"]
+            })
+        
+        # Get scheduler status
+        scheduler_status = "unknown"
+        next_run = None
+        try:
+            from services.scheduler import scheduler
+            job = scheduler.get_job("ai_crypto_trade")
+            if job:
+                scheduler_status = "running"
+                next_run = job.next_run_time.isoformat() if job.next_run_time else None
+            else:
+                scheduler_status = "no job found"
+        except Exception as e:
+            scheduler_status = f"error: {str(e)}"
+        
+        # Get replay mode status
+        replay_status = {"active": False}
+        try:
+            from services.replay_service import is_replay_active, get_current_replay_date, get_replay_date_range
+            if is_replay_active():
+                replay_status["active"] = True
+                replay_status["current_date"] = get_current_replay_date().isoformat() if get_current_replay_date() else None
+                date_range = get_replay_date_range()
+                if date_range:
+                    replay_status["start_date"] = date_range[0].isoformat()
+                    replay_status["end_date"] = date_range[1].isoformat()
+        except Exception:
+            pass
+        
+        return {
+            "total_accounts": len(all_accounts),
+            "active_ai_accounts": len(active_ai_accounts),
+            "accounts": accounts_status,
+            "scheduler": {
+                "status": scheduler_status,
+                "next_run": next_run
+            },
+            "replay_mode": replay_status,
+            "summary": {
+                "trading_enabled": len(active_ai_accounts) > 0,
+                "message": f"{len(active_ai_accounts)} account(s) ready for AI trading" if active_ai_accounts else "No accounts ready for AI trading - check issues above"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get AI status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get AI status: {str(e)}")
+
+
 @router.post("/test-llm")
 async def test_llm_connection(payload: dict):
     """Test LLM connection with provided credentials"""

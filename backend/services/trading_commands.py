@@ -118,9 +118,10 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                     continue
 
                 # Call AI for trading decision
+                logger.info(f"Calling AI API for {account.name} (model: {account.model}, base_url: {account.base_url})")
                 decision = call_ai_for_decision(account, portfolio, prices)
                 if not decision or not isinstance(decision, dict):
-                    logger.warning(f"Failed to get AI decision for {account.name}, skipping")
+                    logger.warning(f"❌ Failed to get AI decision for {account.name} - check API key validity")
                     continue
 
                 operation = decision.get("operation", "").lower() if decision.get("operation") else ""

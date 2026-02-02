@@ -196,7 +196,7 @@ export default function ReplayModeDialog({ open, onOpenChange }: ReplayModeDialo
                 onChange={(e) => setSpeedMultiplier(parseFloat(e.target.value) || 1.0)}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                1.0 = real-time speed, 2.0 = 2x speed, etc.
+                1x = 2 sec/day, 2x = 1 sec/day, 0.5x = 4 sec/day
               </p>
             </div>
 

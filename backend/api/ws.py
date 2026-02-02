@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, date
 import logging
 from services.asset_curve_calculator import get_all_asset_curves_data_new
 
+logger = logging.getLogger(__name__)
+
 
 class ConnectionManager:
     def __init__(self):
@@ -116,6 +118,44 @@ def broadcast_asset_curve_update_sync(timeframe: str = "1h"):
         logging.error(f"Failed to broadcast asset curve update (sync): {e}")
 
 
+async def broadcast_snapshots_to_all_accounts():
+    """Broadcast snapshots to all connected accounts - useful after replay trading"""
+    db = SessionLocal()
+    try:
+        for account_id in list(manager.active_connections.keys()):
+            try:
+                await _send_snapshot(db, account_id)
+            except Exception as e:
+                logger.warning(f"Failed to broadcast snapshot to account {account_id}: {e}")
+    except Exception as e:
+        logger.error(f"Failed to broadcast snapshots to all accounts: {e}")
+    finally:
+        db.close()
+
+
+def broadcast_snapshots_to_all_accounts_sync():
+    """Synchronous wrapper to broadcast snapshots to all connected accounts"""
+    import asyncio
+    import threading
+    
+    def _run_in_thread():
+        """Run async function in a new thread with its own event loop"""
+        try:
+            asyncio.run(broadcast_snapshots_to_all_accounts())
+        except Exception as e:
+            logger.error(f"Failed to broadcast snapshots in thread: {e}")
+    
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(broadcast_snapshots_to_all_accounts())
+        except RuntimeError:
+            thread = threading.Thread(target=_run_in_thread, daemon=True)
+            thread.start()
+    except Exception as e:
+        logger.error(f"Failed to broadcast snapshots (sync): {e}")
+
+
 def get_all_asset_curves_data(db: Session, timeframe: str = "1h"):
     """Get timeframe-based asset curve data for all accounts - WebSocket version
     
@@ -136,16 +176,21 @@ async def _send_snapshot_optimized(db: Session, account_id: int):
     if not account:
         return
     
-    positions = list_positions(db, account_id)
+    all_positions = list_positions(db, account_id)
+    # Filter out positions with zero quantity
+    positions = [p for p in all_positions if p.quantity > 0]
     orders = list_orders(db, account_id)
+    
     # Filter trades and AI decisions by replay period if replay mode is active
     trade_query = db.query(Trade).filter(Trade.account_id == account_id)
     ai_decision_query = db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account_id)
     
+    is_replay = False
     try:
-        from services.replay_service import get_replay_date_range
+        from services.replay_service import get_replay_date_range, is_replay_active
+        is_replay = is_replay_active()
         replay_range = get_replay_date_range()
-        if replay_range:
+        if replay_range and is_replay:
             start_date, current_date = replay_range
             trade_query = trade_query.filter(
                 Trade.trade_time >= start_date,
@@ -155,12 +200,13 @@ async def _send_snapshot_optimized(db: Session, account_id: int):
                 AIDecisionLog.decision_time >= start_date,
                 AIDecisionLog.decision_time <= current_date
             )
-            logger.debug(f"Filtering snapshot data for replay mode: {start_date} to {current_date}")
     except Exception:
         pass  # If replay service not available, continue without filter
     
-    trades = trade_query.order_by(Trade.trade_time.desc()).limit(10).all()  # Reduced from 20 to 10
-    ai_decisions = ai_decision_query.order_by(AIDecisionLog.decision_time.desc()).limit(10).all()  # Reduced from 20 to 10
+    # Use higher limit in replay mode to capture all activity
+    limit = 50 if is_replay else 10
+    trades = trade_query.order_by(Trade.trade_time.desc()).limit(limit).all()
+    ai_decisions = ai_decision_query.order_by(AIDecisionLog.decision_time.desc()).limit(limit).all()
     
     # Calculate positions MARKET VALUE (equity) and NOTIONAL VALUE (exposure)
     positions_market_value = calc_positions_market_value(db, account_id)
@@ -305,16 +351,21 @@ async def _send_snapshot(db: Session, account_id: int):
     account = get_account(db, account_id)
     if not account:
         return
-    positions = list_positions(db, account_id)
+    all_positions = list_positions(db, account_id)
+    # Filter out positions with zero quantity
+    positions = [p for p in all_positions if p.quantity > 0]
     orders = list_orders(db, account_id)
+    
     # Filter trades and AI decisions by replay period if replay mode is active
     trade_query = db.query(Trade).filter(Trade.account_id == account_id)
     ai_decision_query = db.query(AIDecisionLog).filter(AIDecisionLog.account_id == account_id)
     
+    is_replay = False
     try:
-        from services.replay_service import get_replay_date_range
+        from services.replay_service import get_replay_date_range, is_replay_active
+        is_replay = is_replay_active()
         replay_range = get_replay_date_range()
-        if replay_range:
+        if replay_range and is_replay:
             start_date, current_date = replay_range
             trade_query = trade_query.filter(
                 Trade.trade_time >= start_date,
@@ -324,12 +375,16 @@ async def _send_snapshot(db: Session, account_id: int):
                 AIDecisionLog.decision_time >= start_date,
                 AIDecisionLog.decision_time <= current_date
             )
-            logger.debug(f"Filtering snapshot data for replay mode: {start_date} to {current_date}")
-    except Exception:
-        pass  # If replay service not available, continue without filter
+            logger.info(f"Replay snapshot: filtering trades/decisions from {start_date} to {current_date}")
+    except Exception as e:
+        logger.warning(f"Error checking replay mode: {e}")
     
-    trades = trade_query.order_by(Trade.trade_time.desc()).limit(20).all()
-    ai_decisions = ai_decision_query.order_by(AIDecisionLog.decision_time.desc()).limit(20).all()
+    # Get all matching trades and decisions (increase limit for replay mode)
+    trades = trade_query.order_by(Trade.trade_time.desc()).limit(100).all()
+    ai_decisions = ai_decision_query.order_by(AIDecisionLog.decision_time.desc()).limit(100).all()
+    
+    # Log what we found for debugging
+    logger.info(f"Snapshot for account {account_id}: {len(positions)} positions, {len(trades)} trades, {len(ai_decisions)} AI decisions, replay={is_replay}")
     
     # Calculate positions MARKET VALUE (equity) and NOTIONAL VALUE (exposure)
     positions_market_value = calc_positions_market_value(db, account_id)

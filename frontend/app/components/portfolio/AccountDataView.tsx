@@ -200,6 +200,7 @@ export default function AccountDataView({
                               market={position.market}
                               trades={trades}
                               accountId={overview.account.id}
+                              replayState={replayState}
                             />
                           ))}
                         </div>

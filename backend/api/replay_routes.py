@@ -145,9 +145,19 @@ async def advance_replay(request: ReplayAdvanceRequest, db: Session = Depends(ge
         # Trigger trading at the new time point
         try:
             from services.trading_commands import place_ai_driven_crypto_order
+            logger.info(f"🔄 Replay advanced to {new_date} - triggering AI trading...")
             place_ai_driven_crypto_order(max_ratio=0.2)
+            logger.info(f"✅ AI trading completed for replay date {new_date}")
         except Exception as trade_err:
-            logger.warning(f"Failed to execute trading during replay advance: {trade_err}")
+            logger.error(f"❌ Failed to execute trading during replay advance: {trade_err}", exc_info=True)
+        
+        # Broadcast updated snapshots to all connected accounts
+        try:
+            from api.ws import broadcast_snapshots_to_all_accounts_sync
+            broadcast_snapshots_to_all_accounts_sync()
+            logger.info("Broadcasted snapshots to all accounts after replay advance")
+        except Exception as broadcast_err:
+            logger.warning(f"Failed to broadcast snapshots after replay advance: {broadcast_err}")
         
         return {
             "success": True,

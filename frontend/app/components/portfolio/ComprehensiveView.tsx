@@ -1,12 +1,16 @@
 import AccountDataView from './AccountDataView'
+import PriceChart from './PriceChart'
 import { AIDecision, getReplayState, ReplayState, startReplay, stopReplay, advanceReplay } from '@/lib/api'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card } from '@/components/ui/card'
 import { toast } from 'react-hot-toast'
-import { Play, Square, SkipForward } from 'lucide-react'
+import { Play, Square, SkipForward, TrendingUp } from 'lucide-react'
+
+// Trading symbols that agents can trade
+const TRADING_SYMBOLS = ['BTC', 'ETH', 'SOL']
 
 interface Account {
   id: number
@@ -122,25 +126,48 @@ export default function ComprehensiveView({
     }
   }, [startDate, endDate])
 
-  // Poll replay state continuously
+  // Poll replay state with backoff on error. Run effect once to avoid duplicate polling (onRefreshData changes every render).
+  const onRefreshDataRef = useRef(onRefreshData)
+  onRefreshDataRef.current = onRefreshData
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inFlightRef = useRef(false)
+  const CONFIG = { normalMs: 10000, backoffMs: 30000 }
+
   useEffect(() => {
-    const fetchState = async () => {
+    let cancelled = false
+
+    const scheduleNext = (delayMs: number) => {
+      if (cancelled) return
+      pollTimeoutRef.current = setTimeout(() => {
+        pollTimeoutRef.current = null
+        runFetch()
+      }, delayMs)
+    }
+
+    const runFetch = async () => {
+      if (cancelled || inFlightRef.current) return
+      inFlightRef.current = true
       try {
         const state = await getReplayState()
+        if (cancelled) return
         setReplayState(state)
-        // Auto-refresh data when replay state changes
-        if (state.active) {
-          onRefreshData()
-        }
+        if (state.active) onRefreshDataRef.current()
+        scheduleNext(CONFIG.normalMs)
       } catch (err) {
+        if (cancelled) return
         console.error('Failed to fetch replay state:', err)
+        scheduleNext(CONFIG.backoffMs)
+      } finally {
+        inFlightRef.current = false
       }
     }
 
-    fetchState()
-    const interval = setInterval(fetchState, 2000) // Poll every 2 seconds
-    return () => clearInterval(interval)
-  }, [onRefreshData])
+    runFetch()
+    return () => {
+      cancelled = true
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
+    }
+  }, [])
 
   // Auto-advance replay time when active
   useEffect(() => {
@@ -152,22 +179,28 @@ export default function ComprehensiveView({
     const tradingIntervalDays = (currentState as any).trading_interval_days || 1
     const tradingIntervalSeconds = tradingIntervalDays * 86400 // 1d = 86400s, 7d = 604800s
     
-    // Advance by trading interval, adjusted by speed multiplier
-    const speedMs = (tradingIntervalSeconds / currentState.speed_multiplier) * 1000 // Convert to milliseconds
+    // Base rate: 1 day = 2 seconds at 1x speed
+    // So at 1x speed: 1 day takes 2 seconds, 7 days takes 14 seconds
+    // At 2x speed: 1 day takes 1 second, 7 days takes 7 seconds
+    const BASE_MS_PER_DAY = 2000 // 2 seconds per simulated day at 1x
+    const speedMs = (BASE_MS_PER_DAY * tradingIntervalDays) / currentState.speed_multiplier
 
     const interval = setInterval(async () => {
       try {
         await advanceReplay(tradingIntervalSeconds) // Advance by trading interval
         const newState = await getReplayState()
         setReplayState(newState)
-        onRefreshData() // Refresh data after advancing
+        // Wait a moment for backend to broadcast updates, then refresh
+        setTimeout(() => {
+          onRefreshDataRef.current() // Refresh data after advancing
+        }, 500)
       } catch (err) {
         console.error('Failed to advance replay:', err)
       }
     }, speedMs)
 
     return () => clearInterval(interval)
-  }, [replayState?.active, replayState?.state?.speed_multiplier, onRefreshData])
+  }, [replayState?.active, replayState?.state?.speed_multiplier])
 
   const handleStart = async () => {
     if (!startDate || !endDate) {
@@ -223,6 +256,10 @@ export default function ComprehensiveView({
       await stopReplay()
       toast.success('Replay mode stopped')
       setReplayState(null)
+      // Refresh data to show current state after replay ends
+      setTimeout(() => {
+        onRefreshData()
+      }, 500)
     } catch (err: any) {
       toast.error(err.message || 'Failed to stop replay mode')
     } finally {
@@ -235,7 +272,10 @@ export default function ComprehensiveView({
       await advanceReplay(seconds)
       const state = await getReplayState()
       setReplayState(state)
-      onRefreshData()
+      // Wait a moment for backend to process trades and broadcast updates
+      setTimeout(() => {
+        onRefreshData()
+      }, 500)
     } catch (err: any) {
       toast.error(err.message || 'Failed to advance replay')
     }
@@ -289,7 +329,7 @@ export default function ComprehensiveView({
                   onChange={(e) => setSpeedMultiplier(parseFloat(e.target.value) || 1.0)}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  1.0 = real-time speed, 2.0 = 2x speed, etc.
+                  1x = 2 sec/day, 2x = 1 sec/day, 0.5x = 4 sec/day
                 </p>
               </div>
               <div>
@@ -389,23 +429,69 @@ export default function ComprehensiveView({
         </div>
       )}
 
-      <AccountDataView
-        overview={overview}
-        positions={positions}
-        orders={orders}
-        trades={trades}
-        aiDecisions={aiDecisions}
-        allAssetCurves={allAssetCurves}
-        wsRef={wsRef}
-        onSwitchAccount={onSwitchAccount}
-        onRefreshData={onRefreshData}
-        accountRefreshTrigger={accountRefreshTrigger}
-        accounts={accounts}
-        loadingAccounts={loadingAccounts}
-        showAssetCurves={true}
-        showTradingPanel={false}
-        replayState={replayState}
-      />
+      {/* Main Content - Two Column Layout */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 overflow-auto">
+        {/* Left Column: Account Overview */}
+        <div className="overflow-auto">
+          <AccountDataView
+            overview={overview}
+            positions={positions}
+            orders={orders}
+            trades={trades}
+            aiDecisions={aiDecisions}
+            allAssetCurves={allAssetCurves}
+            wsRef={wsRef}
+            onSwitchAccount={onSwitchAccount}
+            onRefreshData={onRefreshData}
+            accountRefreshTrigger={accountRefreshTrigger}
+            accounts={accounts}
+            loadingAccounts={loadingAccounts}
+            showAssetCurves={true}
+            showTradingPanel={false}
+            replayState={replayState}
+          />
+        </div>
+
+        {/* Right Column: Price Charts */}
+        <div className="space-y-4 overflow-auto">
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <TrendingUp className="w-5 h-5" />
+                Price Charts
+              </h2>
+              <div className="text-sm text-muted-foreground">
+                {trades.length} trades
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Green dots = buy/long, Red dots = sell/short
+            </p>
+          </Card>
+          
+          {/* Price charts for each trading symbol */}
+          {TRADING_SYMBOLS.map(symbol => {
+            const symbolTrades = trades.filter(t => t.symbol === symbol)
+            return (
+              <div key={symbol}>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-md font-medium">{symbol}</h3>
+                  <div className="text-xs text-muted-foreground">
+                    {symbolTrades.length} trade{symbolTrades.length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <PriceChart
+                  symbol={symbol}
+                  market="CRYPTO"
+                  trades={trades}
+                  accountId={overview?.account?.id}
+                  replayState={replayState}
+                />
+              </div>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }

@@ -171,6 +171,11 @@ Rules:
                     else:
                         logger.error(f"AI API rate limited after {max_retries} attempts: {response.text}")
                         return None
+                elif response.status_code == 401:
+                    logger.error(f"❌ AI API KEY INVALID (401 Unauthorized) for account {account.name}. Please update your API key in Settings.")
+                    logger.error(f"API endpoint: {api_endpoint}")
+                    logger.error(f"Response: {response.text[:500]}")
+                    return None
                 else:
                     logger.error(f"AI API returned status {response.status_code}: {response.text}")
                     return None

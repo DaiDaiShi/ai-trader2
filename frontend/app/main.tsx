@@ -115,6 +115,16 @@ function App() {
                 ws!.send(JSON.stringify({ type: 'get_snapshot' }))
               }
             } else if (msg.type === 'snapshot' || msg.type === 'snapshot_full' || msg.type === 'snapshot_fast') {
+              // Debug: log snapshot data
+              console.log('Snapshot received:', {
+                type: msg.type,
+                positions: msg.positions?.length || 0,
+                trades: msg.trades?.length || 0,
+                ai_decisions: msg.ai_decisions?.length || 0,
+                orders: msg.orders?.length || 0,
+                sampleTrades: msg.trades?.slice(0, 2),
+                samplePositions: msg.positions?.slice(0, 2)
+              })
               setOverview(msg.overview)
               setPositions(msg.positions)
               setOrders(msg.orders)
